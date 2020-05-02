@@ -1,0 +1,568 @@
+---
+title: <center><b> AirBnB Short Term Rental Investment Analysis </center></b>
+author: <center> Vipul Mayank </center>
+output: 
+  html_document :
+    code_folding : hide
+---
+<style>
+body {
+text-align: justify}
+</style>
+
+# {.tabset .tabset-fade .tabset-pills}
+
+## 1. Synopsis
+
+[**Airbnb, Inc.**](https://en.wikipedia.org/wiki/Airbnb) is an online marketplace for arranging or offering lodging, primarily homestays, or tourism experiences. The company does not own any of the real estate listings, nor does it host events; it acts as a broker, receiving commissions from each booking. The company is based in San Francisco, California, United States.
+
+![](D:/College/Capital One/Data Challenge/Code/AirBnB_NYC.jpg){width=1000px}
+
+***
+#### **Problem Statement**
+
+You are consulting for a **Real Estate Company** that has a niche in purchasing properties to rent out short-term as part of their business model specifically within **New York City**.  The real estate company has already concluded that two bedroom properties are the most profitable; however, they do not know which zip codes are the best to invest in.    
+The real estate company has engaged your firm to build out a data product and provide your conclusions to help them understand which **Zip Codes** would generate the maximum **Profit** on short term rentals within New York City.
+
+<hr /> 
+
+#### **Assumptions**
+
+* The investor will pay for the property in cash (i.e. no mortgage/interest rate will need to be accounted for).
+* The time value of money discount rate is 0% (i.e. $1 today is worth the same 100 years from now).
+*	All properties and all square feet within each locale can be assumed to be homogeneous (i.e. a 1000 square foot property in a    locale such as Bronx or Manhattan generates twice the revenue and costs twice as much as any other 500 square foot property      within that same locale.)
+* The analysis has been done for a period of 30 years.
+* The ARIMA Model will be a perfect predictor for forecasting the prices of listings.
+
+
+## 2. Packages Required
+
+```{r Loading the required packages, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+library(tidyr)
+library(DT)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(readxl)
+library(scales)
+library(RColorBrewer)
+library(wesanderson)
+library(plotly)
+library(data.table)
+library(ggpubr)
+
+```
+
+```{r displaying the packages table, echo=FALSE}
+#Reading the variable summary excel File
+package_sum <- read_excel("D:/College/Capital One/Data Challenge/CapitalOneDataChallenge_Vipul_Mayank/Package Summary.xlsx")
+
+kable(package_sum) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, fixed_thead = T )
+``` 
+
+## 3. Data Preparation {.tabset .tabset-fade .tabset-pills}
+
+### 3.1 Importing the Data
+
+Two datasets have been provided for analysing the problem statement.
+
+* **Zillow Data**: Cost data to determine the average property price for 2 bedrooms
+* **AirBnB Data**: Information on the listing including location, number of bedrooms, room types (entire home/private home/shared home)
+
+The above two datasets have been imported for our analysis.
+
+```{r Reading 2 Bedroom Home Data Zip Code, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+#Reading the Zillow and Listings Data File
+home_price <- read.csv("D:/College/Capital One/Zip_Zhvi_2bedroom.csv") 
+listings <- read.csv("D:/College/Capital One/listings.csv")
+
+``` 
+
+### 3.2 Data Cleaning {.tabset .tabset-fade .tabset-pills}
+
+#### 3.2.1 Zillow Data File
+
+The following actions have been performed on the Zillow dataset to prepare for analysis:
+
+* Our analysis is restricted to the listing in New York City, thus we filter out all the other cities.
+
+* Changing the column name of **RegionName** to **zipcode** for better understanding.
+
+* Apply ARIMA Model to forecast the prices of listings in the year 2020 from the data available.
+
+* Creating a new column **currentPrice** which will hold the currentPrice in the year 2020.
+
+**The data which is available to us contains the prices only till the year 2017. Thus, our analysis would be more accurate if we had forecast the price of the listing for the year 2020.**
+
+Assuming that there is seasonality in the price and also that values depend not only on previous values (Auto Regressive AR) but also on diferences between previous values (Moving Average MA), we apply **ARIMA model** to predict the cost of the propeties.
+
+```{r ARIMA Model for Forecasting Price, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+zillow_forecast <- function(tempdf,cityName){ # Zillow data and New york city given as function argument
+
+  # Select zillow cost information from last 5 years and modify zillow data (tempdf) to only hold relevant columns
+  n <- 60
+  tempdf <- tempdf[,c(2,3,7,(ncol(tempdf) - n):ncol(tempdf))]
+ 
+  tempdf <- filter(tempdf,City == cityName) # Filter for the required city
+  
+  colnames(tempdf)[colnames(tempdf) == "RegionName"] <- "zipcode" # Set proper column name to be used for merging later
+  
+  tempdf$currentPrice <- NULL # Create a new column to store the latest price in 2019
+  # we define a for loop to iterate over each zipcode to obtain latest cost of property
+  for (i in 1:nrow(tempdf)) {
+
+    tmp = ts(as.vector(t(tempdf[,c(4:64)])[,i]),start = c(2012,6),frequency = 12) # Convert the monthly cost data into time series data 
+  
+    ARIMAfit = arima(tmp, order = c(1,1,1), seasonal = list(order = c(1,0,1),period = NA), 
+                     method = "ML")# Define ARIMA model to be used for prediction
+    
+    pred = predict(ARIMAfit, n.ahead = 20)# use the ARIMA model to predict the price
+    
+    predval <- pred$pred # Store the predicted values in a variable 
+    
+    tempdf$currentPrice[i] <- predval[length(predval)] # set the value of current price for the specific zipcode as price in Jan 2019
+  }
+  return(tempdf[,c(1,2,3,65)]) # return the filtered data containing only relevant columns
+
+}
+```
+
+
+```{r Preparing the data for the analysis , echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+zillow_final <- zillow_forecast(home_price,"New York")
+```
+
+The data frame **zillow_final** is ready for our analysis.
+
+#### 3.2.2 Listings Data File
+
+The listings file has 48895 observations and 106 variables. However for our analysis we shall be using columns which are more informative and relevant in analysing the most profitable zipcodes for AirBnb to invest in. Thus, only the following variables are kept for the analysis and the others are dropped.
+
+* ID
+* Zipcode
+* bedrooms
+* price
+* weekly_price
+* monthly_price
+* cleaning_fee
+* neighbourhood_group_cleansed
+* number_of_reviews
+* review_scores_rating
+
+```{r Keeping only relevant columns, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+relevantcol <- c("id","zipcode","bedrooms","price","weekly_price","monthly_price","cleaning_fee","neighbourhood_group_cleansed","number_of_reviews","review_scores_rating")
+
+listings_fil <- listings[,relevantcol]
+```
+
+Our analysis is restricted only for **2 bedrooms**. Thus we filter out listings which has only 2 bedrooms.
+
+```{r Filtering 2 bedroom listings, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+listings_fil <- listings_fil %>% filter(bedrooms == 2)
+```
+
+The **listings_fil** is now ready for our analysis.
+
+#### 3.2.3 Merging and Cleaning
+
+We then merge the two datasets and perform our manipulation and analysis on the merged dataset.
+
+```{r Merge the two datasets, echo=TRUE, message=FALSE, warning=FALSE}
+finalData <- merge(listings_fil,zillow_final,by = c("zipcode")) # merge data sets on zipcode
+str(finalData)
+```
+
+The **variable names** for the final merged dataset are not self-explanatory. **Renaming the column names** to make it more self-explanatory.
+
+```{r Renaming the column names of merged dataset, echo=TRUE, message=FALSE, warning=FALSE}
+colnames(finalData) <-  c("zipcode","id","bedrooms","per_night_price","weekly_price","monthly_price","cleaning_fee","neighbourhood","number_of_reviews","review_scores_rating","city","size_rank","current_price")
+
+```
+
+The **factor levels in the City column** are incorrect as only New York City is required. Thus we correct the factor level of the City column.
+
+```{r Correcting the factor level of City, echo=TRUE, message=FALSE, warning=FALSE}
+finalData$city <- factor(finalData$city, levels = c("New York"))
+```
+
+All the values in the price columns(per_night_price, weekly_price, monthly_price, cleaning_fee) have a **dollar sign** stored in them which will hinder in analysis of that column. Thus, we remove the dollar sign from these columns.
+
+Our final merged dataset is now ready for our analysis.
+
+```{r Remove dollar sign from Price columns, echo=TRUE, message=FALSE, warning=FALSE}
+cols <- c("per_night_price", "weekly_price", "monthly_price","cleaning_fee") # selecting columns to be cleaned
+
+# Specify a function to replace characters with whitespace
+
+replace_dollar <- function(x){
+  price <- as.numeric(gsub("[$,]","",x)) # this function removes $ from data
+  return(price)
+}
+
+# Apply function to replace characters with whitespace
+
+finalData[cols] <- lapply(finalData[cols], replace_dollar) # running the above defined function on cols
+
+# Final Check of the structure of the data
+
+str(finalData)
+
+```
+
+
+### 3.3 Cleaned Dataset
+
+The final cleaned dataset can be found below in an interactive table.
+
+```{r Cleaned Dataset, echo=TRUE, warning=FALSE}
+datatable(finalData, filter = 'top')
+
+```
+
+### 3.4 Summary of Variables
+
+```{r displaying the Variable Summary, echo=FALSE}
+#Reading the variable summary excel File
+package_sum <- read_excel("D:/College/Capital One/Data Challenge/CapitalOneDataChallenge_Vipul_Mayank/Variable Summary.xlsx")
+
+kable(package_sum) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, fixed_thead = T )
+``` 
+
+## 4. Exploratory Data Analysis {.tabset .tabset-fade .tabset-pills}
+
+### 4.1 Listings Analysis
+
+We first analyze the number of listings available in each of the zipcode. This will give us an idea of the zipcodes which have the maximum number of AirBnb listings.
+
+```{r Number of Listings in each zipcode, fig.width=10, warning=FALSE, message=FALSE}
+finalDataWithCount <- finalData %>% 
+                      group_by(zipcode) %>% 
+                      summarise(count = n())
+                      
+ggplot(finalDataWithCount, aes(x = reorder(zipcode,-count), y = count)) + 
+theme_set(theme_light()) +
+geom_bar(stat = "identity", width = .5, fill = "tomato3") +
+ggtitle("Number of 2 Bedroom Listings in NYC in each zipcode") + 
+xlab("Zipcode") + 
+ylab("Number of 2 Bedroom Listings") +
+theme(axis.text.x = element_text(angle = 65, vjust = 0.8))
+
+```
+
+From the above graph, we conclude that the zipcode 11215 has the maximum number of 2 bedroom listings in New York City. Also, the top 10 zipcodes with maximum number of 2 bedroom listings are:
+
+* **11215**
+* **10036**
+* **10003**
+* **10025**
+* **11217**
+* **10011**
+* **10013**
+* **11231**
+* **10014**
+* **11201**
+
+
+### 4.2 Neighbourhood Analysis
+
+We now analyze which neighbourhoods in New York City have the maximum number of 2 bedroom listings. 
+
+```{r Neighbourhood Analysis, fig.width=10}
+
+Neighbourhood_Analysis <- finalData %>% 
+                          group_by(finalData$neighbourhood) %>% 
+                          summarise(count = n())
+
+
+ggplot(Neighbourhood_Analysis, aes(x = reorder(`finalData$neighbourhood`,count), y = count, fill = `finalData$neighbourhood`)) +
+  theme_light() +
+  geom_bar(stat = "identity", width = .5, fill = "#1F618D") +
+  coord_flip() +
+  geom_text(aes(label = count), hjust = 0.0, color = "blue", size = 3.5) +
+  ggtitle("Number of 2 Bedroom Listings in each Neighbourhood") + 
+  xlab("Neighbourhood") + ylab("Number of 2 Bedroom Listings") + 
+  theme(axis.text.x = element_text(angle = 65, vjust = 0.8))
+
+```
+
+From the graph above, we conlcude the following results:
+
+* Manhattan has the maximum number of 2 bedroom listings: 1022, followed by Brooklyn with 501 listings
+* Staten Island and Queens have a much lesser number of 2 bedroom listing as compared to Manhattan and Brooklyn
+
+
+### 4.3 Review Analysis
+
+The **number of reviews** variable can be used as an estimate to foresee the most popular zipcodes for AirBnb in New York City. The more the number of reviews, more popular are the listings in that zipcode. Thus, we now analyze the zipcodes which have the maximum number of reviews.
+
+```{r Analysis popularity of AirBnB via reviews, fig.width=10}
+
+finalData %>% group_by(zipcode) %>% summarise(reviews_count = sum(number_of_reviews)) %>% 
+ggplot( aes(x = zipcode, y = reviews_count)) +
+  geom_segment( aes(x = reorder(zipcode,reviews_count), xend = zipcode, y = 0, yend = reviews_count), color = "blue") +
+  geom_point( color = "orange", size = 4 ) +
+  theme_classic() +
+  coord_flip() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  xlab(" Zipcode ") +
+  ylab("Number of reviews") 
+
+```
+
+From the graph we can conlcude that the zipcodes with most number of reviews are:
+
+* **11215**
+* **10003**
+* **11217**
+* **10036**
+* **11231**
+* **10011**
+* **10013**
+* **10025**
+* **11201**
+* **10014** 
+
+We then visualize the number of reviews grouped by Neighbourhood and also compute the average per night price of the AirBnB listings in those neighbourhoods.
+
+```{r Reviews and Cost Analysis, fig.width=10}
+reviews_data <- finalData %>% group_by(neighbourhood, zipcode, size_rank) %>% summarise(reviews_count = sum(number_of_reviews), avg_night_price = round(mean(per_night_price), digits = 2), avg_rating = round(mean(review_scores_rating, na.rm = TRUE), digits = 2))
+                                                                                        
+review_price_plot <- reviews_data %>% arrange(desc(size_rank)) %>%
+                     ggplot(aes(x = reviews_count, y = avg_night_price, size = avg_rating, color = neighbourhood)) +
+                     geom_point(alpha = 0.5) +
+                     labs(y = "Average Price Per Night in that Zipcode", x = "Total Number of Reviews") + 
+                     ggtitle("Number of Reviews and Price for Zipcodes in Each Neighbourhood") +  
+                     scale_size(range = c(0, 10), name = "Size Rank(M)") 
+
+ggplotly(review_price_plot)
+
+```
+
+The size of the bubble represents the mean average rating of listings in that zipcode of the given neighbourhood for the listings. Bigger the bubble, higher the mean user ratings given to the AirBnBs listing in the neighbourhood. From the graph, we can easily conclude that:
+
+* **The number of reviews in Brooklyn and Manhattan are consideraly much higher than that of Staten Island and Queens**
+* **The average price per night stay in neighbourhoods Brooklyn and Manhattan are much higher than that of Queens and Staten Island**
+
+
+### 4.4 Cost Analysis
+
+In order to analyse the most profitable zipcodes for AirBnB to invest in future, we need to first analyse the cost of investment which is needed to establish an AirBnB listing in that particular zipcode of the neighbourhood.
+
+```{r Property Cost in various neighbourhoods and zipcodes, fig.width=10, warning=FALSE, message=FALSE}
+
+medianCost <-  finalData %>% 
+               select(zipcode,neighbourhood, current_price) %>% 
+               filter(neighbourhood == c("Manhattan","Brooklyn","Queens","Staten Island"))  %>% 
+               group_by(neighbourhood,zipcode) %>% 
+               summarise_all(funs(median)) %>% 
+               ggplot(aes(x = reorder(zipcode, -current_price), y = current_price, fill = neighbourhood )) + 
+               ggtitle("Average Cost of Listings in various Zipcodes") +
+               geom_bar(stat = "identity") + scale_y_continuous(labels = scales::comma) + 
+               labs(y = "Average Cost", x = "Zipcode") +
+               theme_classic2() + 
+               theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor =        element_blank(),panel.border = element_blank(),axis.text.x = element_text(angle = 90, hjust = 1)) + guides(fill = guide_legend(title = "Neighbourhood"))
+
+ggplotly(medianCost)
+
+```
+
+
+From the above graph, we can conclude the zipcodes which has the maximum and minimum average price for each neighbourhood.
+
+* **Manhattan**     - Highest: 10013, Lowest: 10025
+* **Brooklyn**      - Highest: 11201, Lowest: 11234
+* **Staten Island** - Highest: 10305, Lowest: 10303
+* **Queens**        - Highest: 11434
+
+
+### 4.5 Revenue Analysis
+
+The next stage of the analysis involves calculating the revenue earned per year in each of the zipcodes in New York City.
+As given in the problem, we have **asssumed the occupancy rate for the listings to be 75% (or 0.75)**.
+
+```{r Computing Revenue Earned Over the Years, fig.width=10, warning=FALSE, message=FALSE}
+
+revenue_analysis <- finalData
+
+occupancy_rate <- 0.75
+
+Year_days <- 365 # number of days in a year
+
+# Generate the revenue for a year per property
+revenue_analysis$revenue_per_year <- occupancy_rate*Year_days*revenue_analysis$per_night_price 
+                                                          
+# Obtain the Revenue/Cost ratio
+revenue_analysis$revenue_cost_ratio <- ((revenue_analysis$revenue_per_year)/(revenue_analysis$current_price))
+
+# Breakeven period
+revenue_analysis$breakeven_point <- (revenue_analysis$current_price/(revenue_analysis$revenue_per_year - (occupancy_rate*52*revenue_analysis$cleaning_fee)))
+
+# Revenue earned over 5 years
+revenue_analysis$year_5 <- ((revenue_analysis$revenue_per_year*5) - (5*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+# Revenue earned over 10 years
+revenue_analysis$year_10 <- ((revenue_analysis$revenue_per_year*10) - (10*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+# Revenue earned over 15 years
+revenue_analysis$year_15 <- ((revenue_analysis$revenue_per_year*15) - (5*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+# Revenue earned over 20 years
+revenue_analysis$year_20 <- ((revenue_analysis$revenue_per_year*20) - (20*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+# Revenue earned over 25 years
+revenue_analysis$year_25 <- ((revenue_analysis$revenue_per_year*25) - (25*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+# Revenue earned over 30 years
+revenue_analysis$year_30 <- ((revenue_analysis$revenue_per_year*30) - (30*occupancy_rate*52*revenue_analysis$cleaning_fee)) - revenue_analysis$current_price
+
+revenue_plot <- revenue_analysis %>% 
+                select(zipcode,neighbourhood, revenue_per_year) %>% 
+                filter(neighbourhood == c("Manhattan","Brooklyn","Queens","Staten Island"))  %>% 
+                group_by(neighbourhood,zipcode) %>% 
+                summarise_all(funs(median)) %>% 
+                ggplot(aes(x = reorder(zipcode, -revenue_per_year), y = revenue_per_year, fill = neighbourhood )) + 
+                ggtitle("Average Revenue from Listings in various Zipcodes") +
+                geom_bar(stat = "identity") + scale_y_continuous(labels = scales::comma) + 
+                labs(y = "Average Revenue", x = "Zipcode") +
+                theme_classic() + 
+                theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor =          element_blank(),panel.border = element_blank(),axis.text.x = element_text(angle = 90, hjust = 1)) + guides(fill = guide_legend(title = "Neighbourhood"))
+
+ggplotly(revenue_plot)
+
+```
+
+From the above graph, we can conclude that the ten zipcodes which have the maximum revenue earned per year are:
+
+* **10011**
+* **10014**
+* **10013**
+* **10022**
+* **10036**
+* **10023**
+* **10003**
+* **10028**
+* **10025**
+
+### 4.6 Breakeven/Profit Analysis
+
+We now need to analyse the profit earned in the zipcodes of New York City over a period of 30 years. This would help us in concluding which zipcodes will start earning profit the earliest and which zipcodes will earn the maximum profit during this tenure.
+
+For the analysis, I have divided the time into intervals of 5 years, 10 years, 15 years, 20 years, 25 years and 30 years and analysed the profit earned during that tenure. 
+
+```{r Revenue Analysis, fig.height = 15 , fig.width = 10, warning=FALSE, message=FALSE}
+revenue_cost_ratio <- revenue_analysis %>% 
+                      group_by(zipcode, current_price) %>% 
+                      summarise( mean_revenue_per_year = round(mean(revenue_per_year, na.rm = TRUE), digits = 2),     mean_revenue_5_year = round(mean(year_5, na.rm = TRUE), digits = 2), mean_revenue_10_year = round(mean(year_10, na.rm = TRUE), digits = 2), mean_revenue_15_year = round(mean(year_15, na.rm = TRUE), digits = 2), mean_revenue_20_year = round(mean(year_20, na.rm = TRUE), digits = 2), mean_revenue_25_year = round(mean(year_25, na.rm = TRUE), digits = 2), mean_revenue_30_year = round(mean(year_30, na.rm = TRUE), digits = 2))
+
+revenue_5_years  <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_5_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 5 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_5_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("red", "green")) 
+
+revenue_10_years <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_10_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 10 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_10_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("red", "green"))
+
+revenue_15_years <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_15_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 15 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_15_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("green", "red")) 
+
+revenue_20_years <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_20_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 20 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_20_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("green", "red")) 
+
+revenue_25_years <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_25_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 25 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_25_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("green", "red")) 
+
+revenue_30_years <- ggplot(revenue_cost_ratio, aes(y = mean_revenue_30_year , x = zipcode)) + 
+                    coord_flip() + 
+                    labs(y = "Profit in 30 years", x = "Zipcode") +
+                    geom_bar(aes(fill = mean_revenue_30_year < 0), stat = "identity") + scale_fill_manual(guide = FALSE, breaks =                     c(TRUE, FALSE), values = c("green", "red")) 
+
+ggarrange(revenue_5_years, revenue_10_years, revenue_15_years, revenue_20_years,revenue_25_years, revenue_30_years, ncol = 3, nrow = 2)
+
+```
+
+**In the above graph, red indicated loss and green indicates profit.**
+
+From the above graph, we can conclude the following results:
+
+* The overall profit can earliest be seen in a span of 15 years. No listings in any zipcodes earn a profit in 10 years
+* From the graph of profit earned in 15 years, the zipcodes which will start earning profit the earliest are:
+  * 11434
+  * 11234
+  * 10306
+  * 10305
+  * 10304
+  * 10303
+    with 11434 earning the maximum profit in 15 years
+* The trend in profit earned in 20 years remains the same with the addition of 10308 earning profit as well
+* For profit earned in 25 years, 11434 still earns the maximum profit while 10036 earns pretty close to 11434
+* However, for profit earned in 30 years, 10036 earns the maximum profit
+* The zipcodes which do not earn any profit even in 30 years are 10028, 10021 and 10013
+
+
+## 5. Results and Future Scope {.tabset .tabset-fade .tabset-pills}
+
+### 5.1 Results
+
+From the graphs and results obtained, the top 5 zipcodes which are the best choice for investment are:
+
+* **10036 in Manhattan**
+  * The profit earned by listings in 10036 over the period of 30 years is amongst the top 5 zipcodes with maximum profit in that period
+  * The cost of listings in 10036 is considerably quiet low as compared to the other listings in Manhattan
+  * The zipcode is also very popular as it has the second largest number of listings amongst all the other zipcodes
+
+<hr />
+  
+* **11434 in Queens**
+  * The number of listings in 11434 is quiet less as compared to other zipcodes but the listings in this zipcode will start earning profit the earliest as compared to all the other zipcodes
+  * The profit earned by listings in 11434 is the second highest profit earned over a period of 30 years
+
+<hr />
+  
+* **10025 in Manhattan**
+  * The listings in this zipcode have the cheapest cost amongnst all the other zipcodes in Manhattan
+  * The profit earned by listings in this zipcode is amongst the top 5 zipcodes over the period of 30 years
+  * The zipcode is also very popular as it has really high number of listings in Manhattan
+  
+<hr />
+
+* **11234 in Brooklyn**
+  * The cost of listings in 11234 is the least in Brooklyn
+  * The listings in 11234 are amongst the listings which start earning the profit earliest and are among the top 5 listings with maximum profit over 30 years
+  
+<hr />
+
+* **10305 in Staten Island**
+  * The cost of listings in 11234 is very low
+  * The profit earned over the period of 30 years is fifth highest among all the zipcodes
+
+<hr />  
+
+**Thus these 5 zipcodes are the most profitable to invest in.**
+Choosing these 5 zipcodes also helps the company achieve a good coverage over New York City as it covers all the neighbourhoods in New York City which are available in the data set.
+
+### 5.2 Future Scope
+
+* Use Amenities column for better prediction of missing square foot area. Additionally, use it to see how price is impacted when there are more amenities. That impact should be considered to scale rent for the same number of amenities for all properties.
+
+* Analyse the importance / role which hosts play in the popularity amongst listings in the various neighbourhoods.
+
+* Use Text Mining to analyse and infer results from Text Columns such as Description, etc to see if we can infer any common characteristics which are there in popular AirBnB listings.
+
+
+
+
